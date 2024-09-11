@@ -1,138 +1,34 @@
+from copy import deepcopy
 import argparse
 import os
 import random
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
-from ase import Atoms, units, Calculator
+from ase import Atoms, units
+from ase.calculators.calculator import Calculator
 from ase.io import read
 from ase.md import MDLogger
-
-# torch.set_default_dtype(torch.float64)
 from ase.md.nptberendsen import NPTBerendsen
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
-from ase.optimize import FIRE
-
-from checkpoint import multitask_from_checkpoint
-
+from experiments.utils.utils import _get_next_version
+from matsciml.models.utils.io import multitask_from_checkpoint
 from tqdm import tqdm
-from Utils import ASEcalculator
+from utils import (
+    get_density,
+    minimize_structure,
+    replicate_system,
+    symmetricize_replicate,
+)
 
+from matsciml.interfaces.ase import MatSciMLCalculator
+from experiments.utils.configurator import configurator
+from experiments.utils.utils import instantiate_arg_dict
 
-def get_density(atoms: Atoms) -> float:
-    amu_to_grams = 1.66053906660e-24  # 1 amu = 1.66053906660e-24 grams
-    angstrom_to_cm = 1e-8  # 1 Å = 1e-8 cm
-    mass_amu = atoms.get_masses().sum()
-    mass_g = (
-        mass_amu * amu_to_grams
-    )  # Get the volume of the atoms object in cubic angstroms (Å³)
-    volume_A3 = atoms.get_volume()
-    volume_cm3 = volume_A3 * (angstrom_to_cm**3)  # 1 Å³ = 1e-24 cm³
-    density = mass_g / volume_cm3
-
-    return density
-
-
-def write_xyz(filepath: str | Path, atoms: Atoms) -> None:
-    """Writes ovito xyz file"""
-    R = atoms.get_positions()
-    species = atoms.get_atomic_numbers()
-    cell = atoms.get_cell()
-
-    with open(filepath, "w") as f:
-        f.write(str(R.shape[0]) + "\n")
-        flat_cell = cell.flatten()
-        f.write(
-            f'Lattice="{flat_cell[0]} {flat_cell[1]} {flat_cell[2]} {flat_cell[3]} {flat_cell[4]} {flat_cell[5]} {flat_cell[6]} {flat_cell[7]} {flat_cell[8]}" Properties=species:S:1:pos:R:3 Time=0.0'
-        )
-        for i in range(R.shape[0]):
-            f.write(
-                "\n"
-                + str(species[i])
-                + "\t"
-                + str(R[i, 0])
-                + "\t"
-                + str(R[i, 1])
-                + "\t"
-                + str(R[i, 2])
-            )
-
-
-def replicate_system(atoms: Atoms, replicate_factors: np.ndarray) -> Atoms:
-    """
-    Replicates the given ASE Atoms object according to the specified replication factors.
-    """
-    nx, ny, nz = replicate_factors
-    original_cell = atoms.get_cell()
-    original_positions = (
-        atoms.get_scaled_positions() @ original_cell
-    )  # Scaled or Unscaled ?
-    original_numbers = atoms.get_atomic_numbers()
-    x_cell, y_cell, z_cell = original_cell[0], original_cell[1], original_cell[2]
-    new_numbers = []
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                new_numbers += [original_numbers]
-    pos_after_x = np.concatenate([original_positions + i * x_cell for i in range(nx)])
-    pos_after_y = np.concatenate([pos_after_x + i * y_cell for i in range(ny)])
-    pos_after_z = np.concatenate([pos_after_y + i * z_cell for i in range(nz)])
-    new_cell = [nx * original_cell[0], ny * original_cell[1], nz * original_cell[2]]
-    new_atoms = Atoms(
-        numbers=np.concatenate(new_numbers),
-        positions=pos_after_z,
-        cell=new_cell,
-        pbc=atoms.get_pbc(),
-    )
-    return new_atoms
-
-
-def symmetricize_replicate(curr_atoms: int, max_atoms: int, box_lengths: np.ndarray):
-    replication = [1, 1, 1]
-    atom_count = curr_atoms
-    lengths = box_lengths
-    while atom_count < (max_atoms // 2):
-        direction = np.argmin(box_lengths)
-        replication[direction] += 1
-        lengths[direction] = box_lengths[direction] * replication[direction]
-        atom_count = curr_atoms * replication[0] * replication[1] * replication[2]
-    return replication, atom_count
-    # Create new Atoms object
-
-
-def minimize_structure(atoms: Atoms, fmax: float = 0.05, steps: int = 10) -> Atoms:
-    """
-    Perform energy minimization on the given ASE Atoms object using the FIRE optimizer.
-
-    Parameters:
-    atoms (ase.Atoms): The Atoms object to be minimized.
-    fmax (float): The maximum force tolerance for the optimization (default: 0.01 eV/Å).
-    steps (int): The maximum number of optimization steps (default: 1000).
-
-    Returns:
-    ase.Atoms: The minimized Atoms object.
-    """
-    dyn = FIRE(atoms, trajectory=None)
-    dyn.run(fmax=fmax, steps=steps)
-    return atoms
-
-
-class TestArgs:
-    runsteps = 50000
-    model_name = "tensornet"  ##[mace, faenet, tensornet]
-    model_path = "/home/m3rg2000/Simulation/checkpoints-2024/epoch=4-step=4695_tensornet_force_r.ckpt"
-    timestep = 1.0
-    results_dir = "/home/m3rg2000/Universal_matscimal/Sim_output"
-    input_dir = "/home/m3rg2000/Universal_matscimal/Data/exp_1"
-    device = "cuda"
-    max_atoms = 100  # Replicate upto max_atoms (Min. will be max_atoms/2) (#Won't reduce if more than max_atoms)
-    trajdump_interval = 10
-    minimize_steps = 200
-    thermo_interval = 10
-
-
-config = TestArgs()
+from models.matgl_pretrained import load_matgl
+from models.pretrained_mace import load_mace
 
 
 def run_simulation(
@@ -168,7 +64,7 @@ def run_simulation(
             peratom=False,
             mode="w",
         ),
-        interval=config.thermo_interval,
+        interval=args.thermo_interval,
     )
 
     density = []
@@ -187,7 +83,7 @@ def run_simulation(
         angles.append(cell.angles())  # Get the angles
         density.append(get_density(atoms))
 
-    dyn.attach(write_frame, interval=config.trajdump_interval)
+    dyn.attach(write_frame, interval=args.trajdump_interval)
 
     counter = 0
     for k in tqdm(range(steps), desc="Running dynamics integration.", total=steps):
@@ -205,20 +101,38 @@ def run_simulation(
     return avg_density, avg_angles, avg_lattice_parameters
 
 
-def main(args, config):
-    Loaded_model = multitask_from_checkpoint(config.model_path)
-    calculator = ASEcalculator(Loaded_model, config.model_name)
-    # calculator = MACECalculator(model_paths=config.model_path, device=config.device, default_dtype='float64')
-    # calculator.model.double()  # Change model weights type to double precision (hack to avoid error)
-    cif_files_dir = config.input_dir
-    # output_file = config.out_dir
-    import pandas as pd
+def calculator_from_model(args):
+    checkpoint = args.model_path
+    model_args = instantiate_arg_dict(deepcopy(configurator.models[args.model_name]))
+    if args.task == "ForceRegressionTask":
+        if args.model_name in ["chgnet_dgl", "m3gnet_dgl"]:
+            model = load_matgl(checkpoint)
+            model = model.to(torch.double)
+            calc = MatSciMLCalculator(
+                model, transforms=model_args["transforms"], from_matsciml=False
+            )
+        elif "mace" not in args.model_name:
+            calc = MatSciMLCalculator.from_pretrained_force_regression(
+                args.model_path, transforms=model_args["transforms"]
+            )
+        else:
+            model = load_mace(checkpoint)
+            calc = MatSciMLCalculator(model, transforms=model_args["transforms"])
+
+    if args.task == "MultiTaskLitModule":
+        model = multitask_from_checkpoint(checkpoint)
+
+    return calc
+
+
+def main(args):
+    calculator = calculator_from_model(args)
+    cif_files_dir = args.input_dir
 
     dirs = os.listdir(cif_files_dir)
-    # for k in range(len(Dirs)):
-    #     print(k,Dirs[k])
+
     folder = dirs[args.index]
-    print("readong_folder number:", folder)
+    print("reading_folder number:", folder)
 
     # List to hold the data
     data = []
@@ -229,15 +143,13 @@ def main(args, config):
             file_path = os.path.join(folder_path, file)
             Temp, Press = file.split("_")[2:4]
             Temp, Press = float(Temp), float(Press)
-            # TrajPath=os.path.join(config.traj_folder,"_".join(file.split("_")[:2])+'_Trajectory.xyz')
 
-            # try:
             atoms = read(file_path)
 
             # Replicate_system
             replication_factors, size = symmetricize_replicate(
                 len(atoms),
-                max_atoms=config.max_atoms,
+                max_atoms=args.max_atoms,
                 box_lengths=atoms.get_cell_lengths_and_angles()[:3],
             )
             atoms = replicate_system(atoms, replication_factors)
@@ -249,9 +161,7 @@ def main(args, config):
             # Calculate density and cell lengths and angles
             density = get_density(atoms)
             cell_lengths_and_angles = atoms.get_cell_lengths_and_angles().tolist()
-            sim_dir = os.path.join(
-                config.results_dir, f"{args.index}_Simulation_{file}"
-            )
+            sim_dir = os.path.join(args.results_dir, f"{args.index}_Simulation_{file}")
             print("SIMDIR:", sim_dir)
             os.makedirs(sim_dir, exist_ok=True)
             avg_density, avg_angles, avg_lattice_parameters = run_simulation(
@@ -259,8 +169,8 @@ def main(args, config):
                 atoms,
                 pressure=Press,
                 temperature=Temp,
-                timestep=config.timestep,
-                steps=config.runsteps,
+                timestep=args.timestep,
+                steps=args.runsteps,
                 SimDir=sim_dir,
             )
             print(avg_density)
@@ -294,22 +204,9 @@ def main(args, config):
 
             # Save the DataFrame to a CSV file
             df.to_csv(os.path.join(sim_dir, "Data.csv"), index=False)
-            # print(f"Data saved to {output_file}")
-            # except:
-            #     print("filename", file_path)
-
-    # Create a DataFrame
-    # columns = ["Filename", "Exp_Density (g/cm³)", "Exp_a (Å)", "Exp_b (Å)", "Exp_c (Å)", "Exp_alpha (°)", "Exp_beta (°)", "Exp_gamma (°)"
-    #            ,"Sim_Density (g/cm³)", "Sim_a (Å)", "Sim_b (Å)", "Sim_c (Å)", "Sim_alpha (°)", "Sim_beta (°)", "Sim_gamma (°)"]
-    # df = pd.DataFrame(data, columns=columns)
-
-    # # Save the DataFrame to a CSV file
-    # df.to_csv(output_file, index=False)
-    # print(f"Data saved to {output_file}")
 
 
 if __name__ == "__main__":
-    config = TestArgs()
     # Seed for the Python random module
     random.seed(123)
     np.random.seed(123)
@@ -317,20 +214,52 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.cuda.manual_seed(123)
         torch.cuda.manual_seed_all(123)  # if you are using multi-GPU.
-    parser = argparse.ArgumentParser(description="Run MD simulation with MACE model")
+    parser = argparse.ArgumentParser(description="Run MD simulation")
     parser.add_argument("--index", type=int, default=0, help="index of folder")
-    # parser.add_argument("--init_conf_path", type=str, default="example/lips20/data/test/botnet.xyz", help="Path to the initial configuration")
-    # parser.add_argument("--device", type=str, default="cuda", help="Device: ['cpu', 'cuda']")
-    # parser.add_argument("--input_dir", type=str, default="./", help="folder path")
-    # parser.add_argument("--out_dir", type=str, default="out_dir_sl/neqip/lips20/exp.csv", help="Output path")
-    # parser.add_argument("--results_dir", type=str, default="out_dir_sl/neqip/lips20/", help="Output  directory path")
+    parser.add_argument("--runsteps", type=int, default=50_000)
+    parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--timestep", type=float, default=1.0)
+    parser.add_argument("--input_dir", type=str, required=True)
+    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--max_atoms", type=int, default=100)
+    parser.add_argument("--trajdump_interval", type=int, default=10)
+    parser.add_argument("--minimize_steps", type=int, default=200)
+    parser.add_argument("--thermo_interval", type=int, default=10)
+    parser.add_argument("--log_dir_base", type=Path, default="./simulation_results")
+    parser.add_argument("--task", default="ForceRegressionTask")
 
-    # parser.add_argument("--temp", type=float, default=300, help="Temperature in Kelvin")
-    # parser.add_argument("--pressure", type=float, default=1, help="pressure in atm")
-    # parser.add_argument("--timestep", type=float, default=1.0, help="Timestep in fs units")
-    # parser.add_argument("--runsteps", type=int, default=1000, help="No. of steps to run")
-    # parser.add_argument("--sys_name", type=str, default='System', help="System name")
-    # parser.add_argument("--traj_folder", type=str, default="/home/civil/phd/cez218288/Benchmarking/MDBENCHGNN/mace_universal_2.0/EXP/Quartz/a.xyz")
-
+    parser.add_argument(
+        "--dataset_config",
+        type=Path,
+        default=Path("/store/code/ai4science/matsciml/experiments").joinpath(
+            "configs", "datasets"
+        ),
+        help="Dataset config folder or yaml file to use.",
+    )
+    parser.add_argument(
+        "--trainer_config",
+        type=Path,
+        default=Path("/store/code/ai4science/matsciml/experiments").joinpath(
+            "configs", "trainer"
+        ),
+        help="Trainer config folder or yaml file to use.",
+    )
+    parser.add_argument(
+        "--model_config",
+        type=Path,
+        default=Path("/store/code/ai4science/matsciml/experiments").joinpath(
+            "configs", "models"
+        ),
+        help="Model config folder or yaml file to use.",
+    )
     args = parser.parse_args()
-    main(args, config)
+    configurator.configure_models(args.model_config)
+    configurator.configure_datasets(args.dataset_config)
+    configurator.configure_trainer(args.trainer_config)
+    log_dir_base = args.log_dir_base.joinpath(args.model_name, args.task)
+    results_dir = log_dir_base.joinpath(_get_next_version(args.log_dir_base))
+    results_dir.mkdir(parents=True, exist_ok=True)
+    args.results_dir = results_dir
+
+    main(args)

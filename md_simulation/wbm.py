@@ -321,7 +321,6 @@ if __name__ == "__main__":
         default="out_dir_sl/neqip/lips20/",
         help="data summary path",
     )
-
     parser.add_argument(
         "--out_path",
         type=str,

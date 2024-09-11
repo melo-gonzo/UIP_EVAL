@@ -19,7 +19,7 @@ from matsciml.datasets.transforms import (
 )
 from matsciml.lightning import MatSciMLDataModule
 from tqdm import tqdm
-from Utils import (
+from ai4science.UIP_EVAL.md_simulation.utils import (
     ASEcalculator,
     get_initial_rdf,
     get_bond_lengths_noise,

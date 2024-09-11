@@ -1,116 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
+
 from ase import Atoms
-from ase.calculators.calculator import Calculator, all_changes
 from ase.geometry.analysis import Analysis
 from ase.optimize import FIRE
-from matsciml.datasets.trajectory_lmdb import data_list_collater
-from matsciml.datasets.transforms import (
-    FrameAveraging,
-    PeriodicPropertiesTransform,
-    PointCloudToGraphTransform,
-)
-from matsciml.preprocessing.atoms_to_graphs import AtomsToGraphs
-
-a2g = AtomsToGraphs(
-    max_neigh=200,
-    radius=6,
-    r_energy=False,
-    r_forces=False,
-    r_distances=False,
-    r_edges=True,
-    r_fixed=True,
-)
-f_avg = FrameAveraging(frame_averaging="3D", fa_method="stochastic")
-PBCTransform = PeriodicPropertiesTransform(cutoff_radius=6.0, adaptive_cutoff=True)
-GTransform = PointCloudToGraphTransform(
-    "dgl",
-    node_keys=["pos", "atomic_numbers"],
-)
-
-
-def convAtomstoBatchmace(atoms):
-    data_obj = a2g.convert(atoms)
-    Reformatted_batch = {
-        "cell": data_obj.cell,
-        "natoms": torch.Tensor([data_obj.natoms]).unsqueeze(0),
-        "edge_index": [data_obj.edge_index.shape],
-        "cell_offsets": data_obj.cell_offsets,
-        "atomic_numbers": data_obj.atomic_numbers,
-        "pos": data_obj.pos,
-        "y": None,
-        "force": None,
-        "fixed": [data_obj.fixed],
-        "tags": None,
-        "sid": None,
-        "fid": None,
-        "dataset": "S2EFDataset",
-        "graph": data_list_collater([data_obj]),
-    }
-
-    Reformatted_batch = PBCTransform(Reformatted_batch)
-
-    return Reformatted_batch
-
-
-def convAtomstoBatchtensornet(atoms):
-    data_obj = a2g.convert(atoms)
-    Reformatted_batch = {
-        "cell": data_obj.cell,
-        "natoms": torch.Tensor([data_obj.natoms]).unsqueeze(0),
-        "edge_index": [data_obj.edge_index.shape],
-        "cell_offsets": data_obj.cell_offsets,
-        "atomic_numbers": data_obj.atomic_numbers,
-        "pos": data_obj.pos,
-        "y": None,
-        "force": None,
-        "fixed": [data_obj.fixed],
-        "tags": None,
-        "sid": None,
-        "fid": None,
-        "dataset": "S2EFDataset",
-        # 'graph' : data_list_collater([data_obj]),
-    }
-    Reformatted_batch = PBCTransform(Reformatted_batch)
-    Reformatted_batch = GTransform(Reformatted_batch)
-    return Reformatted_batch
-
-
-def convAtomstoBatchfaenet(atoms):
-    data_obj = a2g.convert(atoms)
-    Reformatted_batch = {
-        "cell": data_obj.cell,
-        "natoms": torch.Tensor([data_obj.natoms]).unsqueeze(0),
-        "edge_index": [data_obj.edge_index.shape],
-        "cell_offsets": data_obj.cell_offsets,
-        "atomic_numbers": data_obj.atomic_numbers,
-        "pos": data_obj.pos,
-        "y": None,
-        "force": None,
-        "fixed": [data_obj.fixed],
-        "tags": None,
-        "sid": None,
-        "fid": None,
-        "dataset": "S2EFDataset",
-        "graph": data_list_collater([data_obj]),
-    }
-    Reformatted_batch = f_avg(Reformatted_batch)
-    Reformatted_batch = PBCTransform(Reformatted_batch)
-
-    return Reformatted_batch
-
-
-def convBatchtoAtoms(batch):
-    # data_obj=a2g.convert(atoms)
-    curr_atoms = Atoms(
-        positions=batch["graph"].pos,
-        cell=batch["cell"][0],
-        numbers=batch["graph"].atomic_numbers,
-        pbc=True,
-    )  # True or false
-
-    return curr_atoms
 
 
 def minimize_structure(atoms, fmax=0.05, steps=50):
@@ -358,64 +251,15 @@ def get_rdf(Traj, r_max=6.0, dr=0.01):
     return x, y
 
 
-## MAce Calculator
-class ASEcalculator(Calculator):
-    """Simulation ASE Calculator"""
+def get_density(atoms: Atoms) -> float:
+    amu_to_grams = 1.66053906660e-24  # 1 amu = 1.66053906660e-24 grams
+    angstrom_to_cm = 1e-8  # 1 Å = 1e-8 cm
+    mass_amu = atoms.get_masses().sum()
+    mass_g = (
+        mass_amu * amu_to_grams
+    )  # Get the volume of the atoms object in cubic angstroms (Å³)
+    volume_A3 = atoms.get_volume()
+    volume_cm3 = volume_A3 * (angstrom_to_cm**3)  # 1 Å³ = 1e-24 cm³
+    density = mass_g / volume_cm3
 
-    implemented_properties = ["energy", "forces", "stress"]
-
-    def __init__(self, model, model_name, **kwargs):
-        Calculator.__init__(self, **kwargs)
-        self.results = {}
-
-        self.model = model
-        if model_name == "mace":
-            self.convAtomstoBatch = convAtomstoBatchmace
-
-        elif model_name == "faenet":
-            self.convAtomstoBatch = convAtomstoBatchfaenet
-
-        elif model_name == "tensornet":
-            self.convAtomstoBatch = convAtomstoBatchtensornet
-
-        else:
-            print("Wrong Model Name")
-
-    # pylint: disable=dangerous-default-value
-    def calculate(self, atoms=None, properties=None, system_changes=all_changes):
-        """
-        Calculate properties.
-        :param atoms: ase.Atoms object
-        :param properties: [str], properties to be computed, used by ASE internally
-        :param system_changes: [str], system changes since last calculation, used by ASE internally
-        :return:
-        """
-        # call to base-class to set atoms attribute
-        Calculator.calculate(self, atoms)
-
-        # prepare data
-        batch = self.convAtomstoBatch(atoms)
-
-        # predict + extract data
-        out = self.model.forward(batch)
-        energy = out["regression0"]["corrected_total_energy"].detach().cpu().item()
-        forces = out["force_regression0"]["force"].detach().cpu().numpy()
-        stress = out["force_regression0"]["stress"].squeeze(0).detach().cpu().numpy()
-        # store results
-        E = energy
-        stress = np.array(
-            [
-                stress[0, 0],
-                stress[1, 1],
-                stress[2, 2],
-                stress[1, 2],
-                stress[0, 2],
-                stress[0, 1],
-            ]
-        )
-        self.results = {
-            "energy": E,
-            # force has units eng / len:
-            "forces": forces,
-            "stress": stress,
-        }
+    return density
