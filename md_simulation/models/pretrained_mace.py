@@ -43,6 +43,7 @@ class OGMACE(MACEWrapper):
 
     def forward(self, batch: BatchDict):
         input_data = self.read_batch(batch)
+        input_data["unit_offsets"] = batch["unit_offsets"]
         outputs = self._forward(**input_data)
         return outputs
 
