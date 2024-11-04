@@ -6,7 +6,9 @@ import argparse
 import os
 import random
 import subprocess
+import time
 from pathlib import Path
+import datetime
 
 import numpy as np
 import pandas as pd
@@ -30,7 +32,43 @@ from utils import (
     symmetricize_replicate,
 )
 
+import wandb
 from matsciml.interfaces.ase import MatSciMLCalculator
+
+
+def update_completion_file(completions_file):
+    def parse_line(line):
+        parts = line.split(",")
+        return int(parts[0]), datetime.datetime.fromisoformat(parts[1])
+
+    if os.path.isfile(completions_file):
+        with open(completions_file, "r") as f:
+            lines = f.read().split("\n")
+            completed = [parse_line(line) for line in lines if line]
+            completed.sort()
+            if len(completed) > 0:
+                index = completed[-1][0] + 1
+            else:
+                index = 0
+    else:
+        completed = []
+        index = 0
+
+    current_time = datetime.datetime.now()
+    with open(completions_file, "a+") as f:
+        f.write(f"{index},{current_time.isoformat()}\n")
+
+    if len(completed) > 1:
+        time_diffs = [
+            (completed[i][1] - completed[i - 1][1]).total_seconds()
+            for i in range(1, len(completed))
+        ]
+        print(time_diffs)
+        average_time_diff = sum(time_diffs) / len(time_diffs)
+    else:
+        average_time_diff = None
+
+    return index, average_time_diff
 
 
 def run_simulation(
@@ -88,9 +126,33 @@ def run_simulation(
     dyn.attach(write_frame, interval=args.trajdump_interval)
 
     counter = 0
+    len_time_list = 0
+    time_list = []
     for k in tqdm(range(steps), desc="Running dynamics integration.", total=steps):
+        dyn_time_start = time.time()
         dyn.run(1)
+        dyn_step_time = time.time() - dyn_time_start
+
+        if len_time_list > 9:
+            time_list.pop(0)
+            time_list.append(dyn_step_time)
+        else:
+            time_list.append(dyn_step_time)
+            len_time_list = len(time_list)
+
         counter += 1
+        if counter % 100 == 0:
+            total_energy = atoms.get_total_energy()
+            max_force = np.max(np.abs(atoms.get_forces()))
+            wandb.log(
+                {
+                    "step": k,
+                    "density": density[-1],
+                    "rolling_avg_step_time": sum(time_list) / 10,
+                    "total_energy": total_energy,
+                    "max_force": max_force,
+                }
+            )
 
     density = np.array(density)
     angles = np.array(angles)
@@ -122,6 +184,27 @@ def calculator_from_model(args):
 
 
 def main(args):
+    # wandb.init(
+    #     project="md_simulation_m3gnet",
+    #     entity="m3rg",
+    #     config=args,
+    # )
+    wandb.init(
+        project="md_simulation",
+        entity="melo-gonzo",
+        config=args,
+    )
+
+    if os.path.isfile(args.experiment_times_file):
+        with open(args.experiment_times_file, "r") as f:
+            data = f.read().split("\n")
+            data = [float(_) for _ in data if _]
+        expected_remaining_hours = ((sum(data) / len(data)) / 60 / 60) * (
+            2684 - args.index
+        )
+
+        wandb.log({"expected_time_to_completion": round(expected_remaining_hours, 2)})
+
     calculator = calculator_from_model(args)
     cif_files_dir = args.input_dir
 
@@ -155,14 +238,17 @@ def main(args):
             atoms.calc = calculator
             # from mace.calculators import MACECalculator
             # atoms.calc = MACECalculator(model_paths=args.model_path, device="cpu", default_dtype='float64')
+            minimize_time_start = time.time()
             atoms = minimize_structure(atoms, steps=args.minimize_steps)
-
+            relaxation_time = time.time() - minimize_time_start
+            wandb.log({"relaxation_time": relaxation_time})
             # Calculate density and cell lengths and angles
             density = get_density(atoms)
             cell_lengths_and_angles = atoms.get_cell_lengths_and_angles().tolist()
             sim_dir = os.path.join(args.results_dir, f"{args.index}_Simulation_{file}")
             print("SIMDIR:", sim_dir)
             os.makedirs(sim_dir, exist_ok=True)
+            simulation_time_start = time.time()
             avg_density, avg_angles, avg_lattice_parameters = run_simulation(
                 calculator,
                 atoms,
@@ -172,6 +258,8 @@ def main(args):
                 steps=args.runsteps,
                 SimDir=sim_dir,
             )
+            simulation_time = time.time() - simulation_time_start
+            wandb.log({"simulation_time": simulation_time})
             print(avg_density)
             # Append the results to the data list
             data.append(
@@ -181,6 +269,18 @@ def main(args):
                 + avg_lattice_parameters.tolist()
                 + avg_angles.tolist()
             )
+            # Log final results to wandb
+            total_energy = atoms.get_total_energy()
+            max_force = np.max(np.abs(atoms.get_forces()))
+            wandb.log(
+                {
+                    "exp_density": density,
+                    "avg_density": avg_density,
+                    "final_total_energy": total_energy,
+                    "final_max_force": max_force,
+                }
+            )
+
             # Create a DataFrame
             columns = [
                 "Filename",
@@ -204,6 +304,9 @@ def main(args):
             # Save the DataFrame to a CSV file
             df.to_csv(os.path.join(sim_dir, "Data.csv"), index=False)
 
+    # Finish the wandb run
+    wandb.finish()
+
 
 if __name__ == "__main__":
     # Seed for the Python random module
@@ -226,7 +329,7 @@ if __name__ == "__main__":
     parser.add_argument("--minimize_steps", type=int, default=1000)
     parser.add_argument("--thermo_interval", type=int, default=10)
     parser.add_argument("--log_dir_base", type=Path, default="./simulation_results")
-    parser.add_argument("--task", default="ForceRegressionTask")
+    parser.add_argument("--replica", action="store_true")
 
     parser.add_argument(
         "--dataset_config",
@@ -253,13 +356,17 @@ if __name__ == "__main__":
         help="Model config folder or yaml file to use.",
     )
     args = parser.parse_args()
+    args.experiment_times_file = "./k8/experiment_times.txt"
+
+    if args.replica:
+        completions_file = "./k8/completed.txt"
+        args.index, args.avg_completion_time = update_completion_file(completions_file)
+
     configurator.configure_models(args.model_config)
     configurator.configure_datasets(args.dataset_config)
     configurator.configure_trainer(args.trainer_config)
-    log_dir_base = args.log_dir_base.joinpath(
-        args.model_name, args.task, str(args.index)
-    )
-    results_dir = log_dir_base.joinpath(_get_next_version(args.log_dir_base))
+    log_dir_base = args.log_dir_base.joinpath(args.model_name, str(args.index))
+    results_dir = log_dir_base.joinpath(_get_next_version(log_dir_base))
     results_dir.mkdir(parents=True, exist_ok=True)
 
     args.results_dir = results_dir
@@ -277,7 +384,11 @@ if __name__ == "__main__":
         )
 
     try:
+        total_time_start = time.time()
         main(args)
+        total_time_end = time.time() - total_time_start
+        with open(args.experiment_times_file, "a+") as f:
+            f.write(total_time_end + "\n")
     except Exception:
         import traceback
 

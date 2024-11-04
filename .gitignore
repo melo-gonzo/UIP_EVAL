@@ -1,4 +1,9 @@
 simulation_results/
+100_structures
+k8
+debug_items
+*.lmdb
+test_new
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -66,13 +66,15 @@ def plot_pair_rdfs(Pair_rdfs, shift=0):
     plt.show()
 
 
-def replicate_system(atoms, replicate_factors):
+def replicate_system(atoms: Atoms, replicate_factors: np.ndarray) -> Atoms:
     """
     Replicates the given ASE Atoms object according to the specified replication factors.
     """
     nx, ny, nz = replicate_factors
     original_cell = atoms.get_cell()
-    original_positions = atoms.get_positions() @ original_cell  # Scaled or Unscaled ?
+    original_positions = (
+        atoms.get_scaled_positions() @ original_cell
+    )  # Scaled or Unscaled ?
     original_numbers = atoms.get_atomic_numbers()
     x_cell, y_cell, z_cell = original_cell[0], original_cell[1], original_cell[2]
     new_numbers = []
@@ -117,7 +119,7 @@ def write_xyz(Filepath, atoms):
         )
 
 
-def symmetricize_replicate(curr_atoms, max_atoms, box_lengths):
+def symmetricize_replicate(curr_atoms: int, max_atoms: int, box_lengths: np.ndarray):
     replication = [1, 1, 1]
     atom_count = curr_atoms
     lengths = box_lengths
