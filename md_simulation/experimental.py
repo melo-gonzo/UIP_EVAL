@@ -3,16 +3,17 @@ import sys
 sys.path.insert(0, "/store/code/ai4science/matsciml")
 
 import argparse
+import datetime
 import os
 import random
 import subprocess
 import time
 from pathlib import Path
-import datetime
 
 import numpy as np
 import pandas as pd
 import torch
+import wandb
 import yaml
 from ase import Atoms, units
 from ase.calculators.calculator import Calculator
@@ -22,6 +23,7 @@ from ase.md.nptberendsen import NPTBerendsen
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from experiments.utils.configurator import configurator
 from experiments.utils.utils import _get_next_version
+from matsciml.interfaces.ase import MatSciMLCalculator
 from models.matgl_pretrained import load_pretrained_matgl
 from models.pretrained_mace import load_pretrained_mace
 from tqdm import tqdm
@@ -32,8 +34,7 @@ from utils import (
     symmetricize_replicate,
 )
 
-import wandb
-from matsciml.interfaces.ase import MatSciMLCalculator
+time.sleep(random.randint(10, 300))
 
 
 def update_completion_file(completions_file):
@@ -184,16 +185,16 @@ def calculator_from_model(args):
 
 
 def main(args):
-    # wandb.init(
-    #     project="md_simulation_m3gnet",
-    #     entity="m3rg",
-    #     config=args,
-    # )
     wandb.init(
-        project="md_simulation",
-        entity="melo-gonzo",
+        project="md_simulation_mace_full",
+        entity="m3rg",
         config=args,
     )
+    # wandb.init(
+    #     project="md_simulation",
+    #     entity="melo-gonzo",
+    #     config=args,
+    # )
 
     if os.path.isfile(args.experiment_times_file):
         with open(args.experiment_times_file, "r") as f:
@@ -368,7 +369,6 @@ if __name__ == "__main__":
     log_dir_base = args.log_dir_base.joinpath(args.model_name, str(args.index))
     results_dir = log_dir_base.joinpath(_get_next_version(log_dir_base))
     results_dir.mkdir(parents=True, exist_ok=True)
-
     args.results_dir = results_dir
 
     with open(results_dir.joinpath("cli_args.yaml"), "w") as f:
@@ -388,7 +388,7 @@ if __name__ == "__main__":
         main(args)
         total_time_end = time.time() - total_time_start
         with open(args.experiment_times_file, "a+") as f:
-            f.write(total_time_end + "\n")
+            f.write(str(total_time_end) + "\n")
     except Exception:
         import traceback
 
