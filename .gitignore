@@ -4,6 +4,7 @@ k8
 debug_items
 *.lmdb
 test_new
+*simulation_results*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

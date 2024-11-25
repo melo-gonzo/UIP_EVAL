@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+# /store/docker-home/.local/lib/python3.10/site-packages/ase/atoms.py 796
+
 import numpy as np
 import pandas as pd
 import torch
@@ -34,7 +36,14 @@ from utils import (
     symmetricize_replicate,
 )
 
-time.sleep(random.randint(10, 300))
+# time.sleep(random.randint(10, 300))
+
+
+# Define a function to determine the new interval
+def get_new_interval(current_step):
+    if current_step < 100:
+        return 1
+    return 10
 
 
 def update_completion_file(completions_file):
@@ -81,6 +90,11 @@ def run_simulation(
     steps: int = 10,
     SimDir: str | Path = Path.cwd(),
 ):
+    # from ase.io import write
+    # write('test.xyz', atoms)
+    # print('reading from xyz')
+    # atoms = read("test.xyz")
+
     # Define the temperature and pressure
     init_conf = atoms
     init_conf.set_calculator(calculator)
@@ -95,18 +109,29 @@ def run_simulation(
         compressibility_au=4.57e-5 / units.bar,
     )
 
-    dyn.attach(
-        MDLogger(
-            dyn,
-            init_conf,
-            os.path.join(SimDir, "Simulation_thermo.log"),
-            header=True,
-            stress=True,
-            peratom=False,
-            mode="w",
-        ),
-        interval=args.thermo_interval,
+    # Initialize the logger with an initial interval
+    initial_interval = get_new_interval(0)
+    md_logger = MDLogger(
+        dyn,
+        init_conf,
+        os.path.join(SimDir, "Simulation_thermo.log"),
+        header=True,
+        stress=True,
+        peratom=False,
+        mode="w",
     )
+
+    # Attach the logger with the initial interval
+    dyn.attach(md_logger, interval=initial_interval)
+
+    # Function to update the logger interval dynamically
+    def update_logger_interval():
+        current_step = dyn.get_number_of_steps()
+        new_interval = get_new_interval(current_step)
+        md_logger.interval = new_interval
+
+    update_interval = 10  # Adjust this value as needed
+    dyn.attach(update_logger_interval, interval=update_interval)
 
     density = []
     angles = []
@@ -131,6 +156,9 @@ def run_simulation(
     time_list = []
     for k in tqdm(range(steps), desc="Running dynamics integration.", total=steps):
         dyn_time_start = time.time()
+        # breakpoint()
+        # b /store/code/ai4science/UIP_EVAL/md_simulation/models/matgl_pretrained.py:26
+        # /store/docker-home/.local/lib/python3.10/site-packages/ase/md/nptberendsen.py
         dyn.run(1)
         dyn_step_time = time.time() - dyn_time_start
 
@@ -154,6 +182,8 @@ def run_simulation(
                     "max_force": max_force,
                 }
             )
+        if k < 100:
+            write_frame()
 
     density = np.array(density)
     angles = np.array(angles)
@@ -185,31 +215,31 @@ def calculator_from_model(args):
 
 
 def main(args):
-    wandb.init(
-        project="md_simulation_mace_full",
-        entity="m3rg",
-        config=args,
-    )
     # wandb.init(
-    #     project="md_simulation",
-    #     entity="melo-gonzo",
+    #     project="md_simulation_chgnet_full",
+    #     entity="m3rg",
     #     config=args,
     # )
+    wandb.init(
+        project="md_simulation_debug",
+        entity="melo-gonzo",
+        config=args,
+    )
 
-    if os.path.isfile(args.experiment_times_file):
-        with open(args.experiment_times_file, "r") as f:
-            data = f.read().split("\n")
-            data = [float(_) for _ in data if _]
-        expected_remaining_hours = ((sum(data) / len(data)) / 60 / 60) * (
-            2684 - args.index
-        )
-
-        wandb.log({"expected_time_to_completion": round(expected_remaining_hours, 2)})
+    sys_info = (subprocess.check_output("lscpu", shell=True).strip()).decode()
+    sys_info = sys_info.split("\n")
+    try:
+        model = [_ for _ in sys_info if "Model name:" in _]
+        cpu_type = model[0].split("  ")[-1]
+        wandb.log({"cpu_type": cpu_type})
+    except Exception:
+        pass
 
     calculator = calculator_from_model(args)
     cif_files_dir = args.input_dir
 
     dirs = os.listdir(cif_files_dir)
+    dirs.sort()
 
     folder = dirs[args.index]
     with open(results_dir.joinpath("cli_args.yaml"), "a") as f:
@@ -235,10 +265,10 @@ def main(args):
             )
             atoms = replicate_system(atoms, replication_factors)
 
+            wandb.log({"num_atoms": atoms.positions.shape[0]})
+
             # Minimize the structure
             atoms.calc = calculator
-            # from mace.calculators import MACECalculator
-            # atoms.calc = MACECalculator(model_paths=args.model_path, device="cpu", default_dtype='float64')
             minimize_time_start = time.time()
             atoms = minimize_structure(atoms, steps=args.minimize_steps)
             relaxation_time = time.time() - minimize_time_start
@@ -362,6 +392,10 @@ if __name__ == "__main__":
     if args.replica:
         completions_file = "./k8/completed.txt"
         args.index, args.avg_completion_time = update_completion_file(completions_file)
+
+    if args.index > 2684:
+        time.sleep(100000)
+        os._exit(0)
 
     configurator.configure_models(args.model_config)
     configurator.configure_datasets(args.dataset_config)

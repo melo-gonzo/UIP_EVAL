@@ -25,7 +25,9 @@ def load_pretrained_matgl(model_name):
         graph.ndata["pos"] = graph.ndata["frac_coords"] @ lattice[0]
         state_feats = torch.tensor(state_feats_default)
         total_energies, forces, stresses, *others = self.matgl_forward(
-            graph, lattice, state_feats
+            graph,
+            lattice,
+            state_feats,
         )
         output = {}
         output["energy"] = total_energies
