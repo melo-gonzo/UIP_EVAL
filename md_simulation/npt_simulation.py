@@ -27,9 +27,6 @@ from utils import (
 from loguru import logger
 
 
-DEBUG = True
-
-
 # Define a function to determine the new interval
 def get_new_interval(current_step):
     if current_step < 100:
@@ -46,6 +43,7 @@ def run_simulation(
     steps: int = 10,
     SimDir: str | Path = Path.cwd(),
     traj_dump_interval: int = 10,
+    debug: bool = False,
 ):
     # Define the temperature and pressure
     init_conf = atoms
@@ -58,7 +56,7 @@ def run_simulation(
         timestep=timestep * units.fs,
         temperature_K=temperature,
         pressure_au=pressure * units.bar,
-        compressibility_au=4.57e-5 / units.bar,
+        ressibility_au=4.57e-5 / units.bar,
     )
 
     # Initialize the logger with an initial interval
@@ -122,7 +120,7 @@ def run_simulation(
         if counter % 100 == 0:
             total_energy = atoms.get_total_energy()
             max_force = np.max(np.abs(atoms.get_forces()))
-            if not DEBUG:
+            if not debug:
                 wandb.log(
                     {
                         "step": k,
@@ -146,11 +144,11 @@ def run_simulation(
     return avg_density, avg_angles, avg_lattice_parameters
 
 
-def run_relaxation(atoms, minimize_steps):
+def run_relaxation(atoms, minimize_steps, debug: bool = False):
     minimize_time_start = time.time()
     atoms = minimize_structure(atoms, steps=minimize_steps)
     relaxation_time = time.time() - minimize_time_start
-    if not DEBUG:
+    if not debug:
         wandb.log({"relaxation_time": relaxation_time})
     # Calculate density and cell lengths and angles
     density = get_density(atoms)
@@ -168,7 +166,7 @@ def run(atoms, args, temperature, pressure, file):
     )
     atoms = replicate_system(atoms, replication_factors)
 
-    if not DEBUG:
+    if not args.debug:
         wandb.log({"num_atoms": atoms.positions.shape[0]})
 
     # Minimize the structure
@@ -188,9 +186,10 @@ def run(atoms, args, temperature, pressure, file):
         steps=args.runsteps,
         SimDir=sim_dir,
         traj_dump_interval=args.trajdump_interval,
+        debug=args.debug,
     )
     simulation_time = time.time() - simulation_time_start
-    if not DEBUG:
+    if not args.debug:
         wandb.log({"simulation_time": simulation_time})
     # Append the results to the data list
     data.append(
@@ -203,7 +202,7 @@ def run(atoms, args, temperature, pressure, file):
     # Log final results to wandb
     total_energy = atoms.get_total_energy()
     max_force = np.max(np.abs(atoms.get_forces()))
-    if not DEBUG:
+    if not args.debug:
         wandb.log(
             {
                 "exp_density": density,

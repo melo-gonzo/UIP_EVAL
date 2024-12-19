@@ -26,8 +26,6 @@ from models.pretrained_mace import load_pretrained_mace
 from npt_simulation import run
 
 
-DEBUG = True
-
 HACKED_REPLICA = False
 if HACKED_REPLICA:
     time.sleep(random.randint(10, 300))
@@ -103,7 +101,7 @@ def log_hardware_environment():
     try:
         model = [_ for _ in sys_info if "Model name:" in _]
         cpu_type = model[0].split("  ")[-1]
-        if not DEBUG:
+        if not args.debug:
             wandb.log({"cpu_type": cpu_type})
     except Exception:
         pass
@@ -126,7 +124,7 @@ def get_source_folder(args):
 
 def main(args):
     wandb_setup = {"project": args.project, "entity": args.entity, "config": args}
-    if not DEBUG:
+    if not args.debug:
         setup_logger(**wandb_setup)
 
     log_hardware_environment()
@@ -149,8 +147,8 @@ def main(args):
         atoms.calc = calculator
         run(atoms, args, temperature, pressure, file)
 
-    # Finish the wandb run
-    if not DEBUG:
+    if not args.debug:
+        # Finish the wandb run
         wandb.finish()
 
 
@@ -178,11 +176,12 @@ if __name__ == "__main__":
     parser.add_argument("--replica", action="store_true")
     parser.add_argument("--project", type=str, default="debug")
     parser.add_argument("--entity", type=str, default="melo-gonzo")
+    parser.add_argument("--debug", action="store_true")
 
     parser.add_argument(
         "--dataset_config",
         type=Path,
-        default=Path("/store/code/ai4science/matsciml/experiments").joinpath(
+        default=Path("/store/code/ai4science/UIP_EVAL/matsciml/experiments").joinpath(
             "configs", "datasets"
         ),
         help="Dataset config folder or yaml file to use.",
@@ -190,7 +189,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--trainer_config",
         type=Path,
-        default=Path("/store/code/ai4science/matsciml/experiments").joinpath(
+        default=Path("/store/code/ai4science/UIP_EVAL/matsciml/experiments").joinpath(
             "configs", "trainer"
         ),
         help="Trainer config folder or yaml file to use.",
@@ -198,7 +197,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model_config",
         type=Path,
-        default=Path("/store/code/ai4science/matsciml/experiments").joinpath(
+        default=Path("/store/code/ai4science/UIP_EVAL/matsciml/experiments").joinpath(
             "configs", "models"
         ),
         help="Model config folder or yaml file to use.",
@@ -222,6 +221,8 @@ if __name__ == "__main__":
     results_dir = log_dir_base.joinpath(_get_next_version(log_dir_base))
     results_dir.mkdir(parents=True, exist_ok=True)
     args.results_dir = results_dir
+    if args.debug:
+        args.results_dir = "./debug_logs"
 
     with open(results_dir.joinpath("cli_args.yaml"), "w") as f:
         command = "python experimental.py " + " ".join(
