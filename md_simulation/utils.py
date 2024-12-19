@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-
 from ase import Atoms
 from ase.geometry.analysis import Analysis
 from ase.optimize import FIRE
@@ -92,6 +91,7 @@ def replicate_system(atoms: Atoms, replicate_factors: np.ndarray) -> Atoms:
         cell=new_cell,
         pbc=atoms.get_pbc(),
     )
+    new_atoms.calc = atoms.calc
     return new_atoms
 
 

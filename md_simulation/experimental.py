@@ -1,6 +1,5 @@
 import sys
 
-# sys.path.insert(0, "/store/code/ai4science/matsciml")
 sys.path.insert(0, "/store/code/ai4science/UIP_EVAL/matsciml")
 
 
@@ -11,8 +10,6 @@ import random
 import subprocess
 import time
 from pathlib import Path
-
-# /store/docker-home/.local/lib/python3.10/site-packages/ase/atoms.py 796
 
 import numpy as np
 import pandas as pd
@@ -28,9 +25,10 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from experiments.utils.configurator import configurator
 from experiments.utils.utils import _get_next_version
 from matsciml.interfaces.ase import MatSciMLCalculator
+from tqdm import tqdm
+
 from models.matgl_pretrained import load_pretrained_matgl
 from models.pretrained_mace import load_pretrained_mace
-from tqdm import tqdm
 from utils import (
     get_density,
     minimize_structure,
@@ -91,11 +89,6 @@ def run_simulation(
     steps: int = 10,
     SimDir: str | Path = Path.cwd(),
 ):
-    # from ase.io import write
-    # write('test.xyz', atoms)
-    # print('reading from xyz')
-    # atoms = read("test.xyz")
-
     # Define the temperature and pressure
     init_conf = atoms
     init_conf.set_calculator(calculator)
@@ -157,9 +150,6 @@ def run_simulation(
     time_list = []
     for k in tqdm(range(steps), desc="Running dynamics integration.", total=steps):
         dyn_time_start = time.time()
-        # breakpoint()
-        # b /store/code/ai4science/UIP_EVAL/md_simulation/models/matgl_pretrained.py:26
-        # /store/docker-home/.local/lib/python3.10/site-packages/ase/md/nptberendsen.py
         dyn.run(1)
         dyn_step_time = time.time() - dyn_time_start
 

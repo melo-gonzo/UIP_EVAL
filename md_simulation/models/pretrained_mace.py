@@ -111,11 +111,11 @@
 #     return model
 
 
-from mace.calculators import mace_mp
 from types import MethodType
 from warnings import warn
-import torch
 
+import torch
+from mace.calculators import mace_mp
 
 """
 For reference :
