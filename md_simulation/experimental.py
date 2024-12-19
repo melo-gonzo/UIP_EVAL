@@ -1,6 +1,8 @@
 import sys
 
-sys.path.insert(0, "/store/code/ai4science/matsciml")
+# sys.path.insert(0, "/store/code/ai4science/matsciml")
+sys.path.insert(0, "/store/code/ai4science/UIP_EVAL/matsciml")
+
 
 import argparse
 import datetime
@@ -36,7 +38,7 @@ from utils import (
     symmetricize_replicate,
 )
 
-# time.sleep(random.randint(10, 300))
+time.sleep(random.randint(10, 300))
 
 
 # Define a function to determine the new interval
@@ -73,7 +75,6 @@ def update_completion_file(completions_file):
             (completed[i][1] - completed[i - 1][1]).total_seconds()
             for i in range(1, len(completed))
         ]
-        print(time_diffs)
         average_time_diff = sum(time_diffs) / len(time_diffs)
     else:
         average_time_diff = None
@@ -221,7 +222,7 @@ def main(args):
     #     config=args,
     # )
     wandb.init(
-        project="md_simulation_debug",
+        project="md_simulation_m3gnet_full",
         entity="melo-gonzo",
         config=args,
     )
@@ -390,6 +391,7 @@ if __name__ == "__main__":
     args.experiment_times_file = "./k8/experiment_times.txt"
 
     if args.replica:
+        # time.sleep(random.randint(10, 300))
         completions_file = "./k8/completed.txt"
         args.index, args.avg_completion_time = update_completion_file(completions_file)
 
