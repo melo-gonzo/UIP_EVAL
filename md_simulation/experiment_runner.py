@@ -1,14 +1,17 @@
-import sys
+# sys.path.insert(0, "/store/code/ai4science/UIP_EVAL/matsciml")
 
-sys.path.insert(0, "/store/code/ai4science/UIP_EVAL/matsciml")
+import time
+import random
 
+HACKED_REPLICA = True
+if HACKED_REPLICA:
+    time.sleep(random.randint(10, 300))
 
 import argparse
 import datetime
 import os
-import random
+
 import subprocess
-import time
 from pathlib import Path
 
 import numpy as np
@@ -23,10 +26,12 @@ from matsciml.interfaces.ase import MatSciMLCalculator
 
 from models.matgl_pretrained import load_pretrained_matgl
 from models.pretrained_mace import load_pretrained_mace
+from models._mattersim import load_pretrained_mattersim
+
 from npt_simulation import run
 
 
-HACKED_REPLICA = False
+HACKED_REPLICA = True
 if HACKED_REPLICA:
     time.sleep(random.randint(10, 300))
 
@@ -72,6 +77,8 @@ def get_calculator():
 def get_model(model_name):
     if model_name in ["chgnet_dgl", "m3gnet_dgl"]:
         return load_pretrained_matgl(model_name)
+    if model_name in ["mattersim"]:
+        return load_pretrained_mattersim()
     if model_name in ["mace_pyg"]:
         return load_pretrained_mace(model_name)
 
@@ -164,7 +171,7 @@ if __name__ == "__main__":
     parser.add_argument("--index", type=int, default=0, help="index of folder")
     parser.add_argument("--runsteps", type=int, default=50_000)
     parser.add_argument("--model_name", type=str, required=True)
-    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--model_path", type=str)
     parser.add_argument("--timestep", type=float, default=1.0)
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--device", type=str, default="cpu")
@@ -211,7 +218,7 @@ if __name__ == "__main__":
         args.index, args.avg_completion_time = update_completion_file(completions_file)
 
     if args.index > 2684:
-        time.sleep(100000)
+        time.sleep(1_000_000)
         os._exit(0)
 
     configurator.configure_models(args.model_config)
@@ -249,3 +256,5 @@ if __name__ == "__main__":
         with open(results_dir.joinpath("error.txt"), "w") as f:
             f.write("\n" + str(traceback.format_exc()))
             print(traceback.format_exc())
+
+# python experiment_runner.py --model_name mattersim --input_dir /store/nosnap/mlip-eval/uip-data/amcsd_processed_final/all --index 0 --debug

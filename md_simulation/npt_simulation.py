@@ -51,12 +51,14 @@ def run_simulation(
     # Initialize the NPT dynamics
     MaxwellBoltzmannDistribution(init_conf, temperature_K=temperature)
 
+    starting_temperature = temperature
+
     dyn = NPTBerendsen(
         init_conf,
         timestep=timestep * units.fs,
         temperature_K=temperature,
         pressure_au=pressure * units.bar,
-        ressibility_au=4.57e-5 / units.bar,
+        compressibility_au=4.57e-5 / units.bar,
     )
 
     # Initialize the logger with an initial interval
@@ -103,18 +105,34 @@ def run_simulation(
 
     counter = 0
     len_time_list = 0
+    len_temperature_list = 0
     time_list = []
+    temperature_list = []
     for k in tqdm(range(steps), desc="Running dynamics integration.", total=steps):
         dyn_time_start = time.time()
         dyn.run(1)
         dyn_step_time = time.time() - dyn_time_start
-
         if len_time_list > 9:
             time_list.pop(0)
             time_list.append(dyn_step_time)
         else:
             time_list.append(dyn_step_time)
             len_time_list = len(time_list)
+
+        if len_temperature_list > 9:
+            temperature_list.pop(0)
+            temperature_list.append(dyn.atoms.get_temperature())
+            diffs = [b - a for a, b in zip(temperature_list, temperature_list[1:])]
+            diff_check = [
+                diffs[idx] > 10 * temperature_list[idx - 1]
+                for idx in range(1, len(diffs))
+            ]
+            if all(temp > 3_000 for temp in temperature_list) or all(diff_check):
+                wandb.log({"temp_check_stopped": True})
+                break
+        else:
+            temperature_list.append(dyn.atoms.get_temperature())
+            len_temperature_list = len(temperature_list)
 
         counter += 1
         if counter % 100 == 0:
@@ -126,6 +144,7 @@ def run_simulation(
                         "step": k,
                         "density": density[-1],
                         "rolling_avg_step_time": sum(time_list) / 10,
+                        "temp_rolling_avg": sum(temperature_list) / 10,
                         "total_energy": total_energy,
                         "max_force": max_force,
                     }
